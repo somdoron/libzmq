@@ -218,12 +218,15 @@ namespace zmq
         //  returns only after at least one command was processed.
         //  If throttle argument is true, commands are processed at most once
         //  in a predefined time period.
-        int process_commands (int timeout_, bool throttle_);
+        int process_commands (bool throttle_);
 
         //  Handlers for incoming commands.
         void process_stop ();
         void process_bind (zmq::pipe_t *pipe_);
         void process_term (int linger_);
+
+		void enter_mutex();
+		void exit_mutex();
 
         //  Socket's mailbox object.
         mailbox_t mailbox;
@@ -260,9 +263,13 @@ namespace zmq
         // Last socket endpoint resolved URI
         std::string last_endpoint;
 
+		// mutex for thread safety if enabled
+		mutex_t sync;
+
         socket_base_t (const socket_base_t&);
         const socket_base_t &operator = (const socket_base_t&);
-        mutex_t sync;
+        
+		
     };
 
 }

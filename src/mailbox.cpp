@@ -55,7 +55,17 @@ void zmq::mailbox_t::send (const command_t &cmd_)
         signaler.send ();
 }
 
-int zmq::mailbox_t::recv (command_t *cmd_, int timeout_)
+int zmq::mailbox_t::wait(int timeout_)
+{
+	//  Wait for signal from the command sender.
+	const int rc = signaler.wait(timeout_);
+	if (rc == -1) {
+		errno_assert(errno == EAGAIN || errno == EINTR);
+		return -1;
+	}
+}
+
+int zmq::mailbox_t::recv (command_t *cmd_)
 {
     //  Try to get the command straight away.
     if (active) {
@@ -67,7 +77,7 @@ int zmq::mailbox_t::recv (command_t *cmd_, int timeout_)
     }
 
     //  Wait for signal from the command sender.
-    const int rc = signaler.wait (timeout_);
+    const int rc = signaler.wait (0);
     if (rc == -1) {
         errno_assert (errno == EAGAIN || errno == EINTR);
         return -1;

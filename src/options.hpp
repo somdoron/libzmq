@@ -179,6 +179,8 @@ namespace zmq
         //  close socket.  Default is 30 secs.  0 means no handshake timeout.
         int handshake_ivl;
 
+		// Indicate if the socket is thread safe or not
+		bool thread_safe;
     };
 }
 

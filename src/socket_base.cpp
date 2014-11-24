@@ -139,7 +139,7 @@ zmq::socket_base_t::socket_base_t (ctx_t *parent_, uint32_t tid_, int sid_) :
     rcvmore (false),
     file_desc(-1),
     monitor_socket (NULL),
-    monitor_events (0)
+    monitor_events (0)	
 {
     options.socket_id = sid_;
     options.ipv6 = (parent_->get (ZMQ_IPV6) != 0);
@@ -271,6 +271,11 @@ int zmq::socket_base_t::setsockopt (int option_, const void *optval_,
         return -1;
     }
 
+	// because the thread_safe option might be changed during the setsockopt we remember it's value and unlock the sync manually
+	bool thread_safe = options.thread_safe;
+
+	enter_mutex();
+	
     //  First, check whether specific socket type overloads the option.
     int rc = xsetsockopt (option_, optval_, optvallen_);
     if (rc == 0 || errno != EINVAL)
@@ -278,7 +283,14 @@ int zmq::socket_base_t::setsockopt (int option_, const void *optval_,
 
     //  If the socket type doesn't support the option, pass it to
     //  the generic option parser.
-    return options.setsockopt (option_, optval_, optvallen_);
+	rc = options.setsockopt (option_, optval_, optvallen_);
+
+	if (thread_safe)
+	{
+		sync.unlock();
+	}
+
+	return rc;
 }
 
 int zmq::socket_base_t::getsockopt (int option_, void *optval_,
@@ -288,40 +300,59 @@ int zmq::socket_base_t::getsockopt (int option_, void *optval_,
         errno = ETERM;
         return -1;
     }
+
+	enter_mutex();
     
     //  First, check whether specific socket type overloads the option.
     int rc = xgetsockopt (option_, optval_, optvallen_);
-    if (rc == 0 || errno != EINVAL)
-        return rc;
+	if (rc == 0 || errno != EINVAL)
+	{
+		exit_mutex();
+		return rc;
+	}
 
     if (option_ == ZMQ_RCVMORE) {
         if (*optvallen_ < sizeof (int)) {
             errno = EINVAL;
+
+			exit_mutex();
             return -1;
         }
         *((int*) optval_) = rcvmore ? 1 : 0;
         *optvallen_ = sizeof (int);
+
+		exit_mutex();
         return 0;
     }
 
     if (option_ == ZMQ_FD) {
         if (*optvallen_ < sizeof (fd_t)) {
             errno = EINVAL;
-            return -1;
+            
+			exit_mutex();
+			return -1;
         }
         *((fd_t*) optval_) = mailbox.get_fd ();
         *optvallen_ = sizeof (fd_t);
+
+		exit_mutex();
         return 0;
     }
 
     if (option_ == ZMQ_EVENTS) {
         if (*optvallen_ < sizeof (int)) {
             errno = EINVAL;
+
+			exit_mutex();
             return -1;
         }
         int rc = process_commands (0, false);
-        if (rc != 0 && (errno == EINTR || errno == ETERM))
-            return -1;
+		if (rc != 0 && (errno == EINTR || errno == ETERM))
+		{
+			exit_mutex();
+			return -1;
+		}
+            
         errno_assert (rc == 0);
         *((int*) optval_) = 0;
         if (has_out ())
@@ -329,6 +360,8 @@ int zmq::socket_base_t::getsockopt (int option_, void *optval_,
         if (has_in ())
             *((int*) optval_) |= ZMQ_POLLIN;
         *optvallen_ = sizeof (int);
+
+		exit_mutex();
         return 0;
     }
 
@@ -351,18 +384,27 @@ int zmq::socket_base_t::bind (const char *addr_)
         errno = ETERM;
         return -1;
     }
+	
+	enter_mutex();
 
     //  Process pending commands, if any.
     int rc = process_commands (0, false);
-    if (unlikely (rc != 0))
-        return -1;
+	if (unlikely(rc != 0))
+	{
+		exit_mutex();
+		return -1;
+	}
+        
 
     //  Parse addr_ string.
     std::string protocol;
     std::string address;
-    if (parse_uri (addr_, protocol, address) || check_protocol (protocol))
-        return -1;
-
+	if (parse_uri(addr_, protocol, address) || check_protocol(protocol))
+	{
+		exit_mutex();
+		return -1;
+	}
+        
     if (protocol == "inproc") {
         const endpoint_t endpoint = { this, options };
         const int rc = register_endpoint (addr_, endpoint);
@@ -370,12 +412,17 @@ int zmq::socket_base_t::bind (const char *addr_)
             connect_pending (addr_, this);
             last_endpoint.assign (addr_);
         }
+
+		exit_mutex();
         return rc;
     }
 
     if (protocol == "pgm" || protocol == "epgm" || protocol == "norm") {
         //  For convenience's sake, bind can be used interchageable with
         //  connect for PGM, EPGM and NORM transports.
+
+		// exit the mutex, the connect will enter the mutex again
+		exit_mutex();
         return connect (addr_);
     }
 
@@ -384,6 +431,8 @@ int zmq::socket_base_t::bind (const char *addr_)
     io_thread_t *io_thread = choose_io_thread (options.affinity);
     if (!io_thread) {
         errno = EMTHREAD;
+
+		exit_mutex();
         return -1;
     }
 
@@ -395,6 +444,8 @@ int zmq::socket_base_t::bind (const char *addr_)
         if (rc != 0) {
             delete listener;
             event_bind_failed (address, zmq_errno());
+
+			exit_mutex();
             return -1;
         }
 
@@ -402,6 +453,8 @@ int zmq::socket_base_t::bind (const char *addr_)
         listener->get_address (last_endpoint);
 
         add_endpoint (last_endpoint.c_str (), (own_t *) listener, NULL);
+
+		exit_mutex();
         return 0;
     }
 
@@ -414,6 +467,8 @@ int zmq::socket_base_t::bind (const char *addr_)
         if (rc != 0) {
             delete listener;
             event_bind_failed (address, zmq_errno());
+
+			exit_mutex();
             return -1;
         }
 
@@ -421,6 +476,8 @@ int zmq::socket_base_t::bind (const char *addr_)
         listener->get_address (last_endpoint);
 
         add_endpoint (last_endpoint.c_str (), (own_t *) listener, NULL);
+
+		exit_mutex();
         return 0;
     }
 #endif
@@ -433,6 +490,8 @@ int zmq::socket_base_t::bind (const char *addr_)
          if (rc != 0) {
              delete listener;
              event_bind_failed (address, zmq_errno());
+
+			 exit_mutex();
              return -1;
          }
 
@@ -440,11 +499,15 @@ int zmq::socket_base_t::bind (const char *addr_)
         listener->get_address (last_endpoint);
 
         add_endpoint (addr_, (own_t *) listener, NULL);
+
+		exit_mutex();
         return 0;
     }
 #endif
 
     zmq_assert (false);
+
+	exit_mutex();
     return -1;
 }
 
@@ -455,16 +518,22 @@ int zmq::socket_base_t::connect (const char *addr_)
         return -1;
     }
 
+	enter_mutex();
+
     //  Process pending commands, if any.
     int rc = process_commands (0, false);
-    if (unlikely (rc != 0))
-        return -1;
+	if (unlikely(rc != 0)) {
+		exit_mutex();
+		return -1;
+	}
 
     //  Parse addr_ string.
     std::string protocol;
     std::string address;
-    if (parse_uri (addr_, protocol, address) || check_protocol (protocol))
-        return -1;
+	if (parse_uri(addr_, protocol, address) || check_protocol(protocol))	{
+		exit_mutex();
+		return -1;
+	}
 
     if (protocol == "inproc") {
 
@@ -562,6 +631,7 @@ int zmq::socket_base_t::connect (const char *addr_)
         // remember inproc connections for disconnect
         inprocs.insert (inprocs_t::value_type (std::string (addr_), new_pipes [0]));
 
+		exit_mutex();
         return 0;
     }
     bool is_single_connect = (options.type == ZMQ_DEALER ||
@@ -573,6 +643,8 @@ int zmq::socket_base_t::connect (const char *addr_)
             // There is no valid use for multiple connects for SUB-PUB nor
             // DEALER-ROUTER nor REQ-REP. Multiple connects produces
             // nonsensical results.
+
+			exit_mutex();
             return 0;
         }
     }
@@ -581,6 +653,8 @@ int zmq::socket_base_t::connect (const char *addr_)
     io_thread_t *io_thread = choose_io_thread (options.affinity);
     if (!io_thread) {
         errno = EMTHREAD;
+
+		exit_mutex();
         return -1;
     }
 
@@ -620,6 +694,8 @@ int zmq::socket_base_t::connect (const char *addr_)
         if (rc == -1) {
             errno = EINVAL;
             delete paddr;
+
+			exit_mutex();
             return -1;
         }
         //  Defer resolution until a socket is opened
@@ -633,6 +709,8 @@ int zmq::socket_base_t::connect (const char *addr_)
         int rc = paddr->resolved.ipc_addr->resolve (address.c_str ());
         if (rc != 0) {
             delete paddr;
+
+			exit_mutex();
             return -1;
         }
     }
@@ -647,8 +725,11 @@ int zmq::socket_base_t::connect (const char *addr_)
         int rc = pgm_socket_t::init_address(address.c_str(), &res, &port_number);
         if (res != NULL)
             pgm_freeaddrinfo (res);
-        if (rc != 0 || port_number == 0)
-            return -1;
+		if (rc != 0 || port_number == 0) {
+			
+			exit_mutex();
+			return -1;
+		}
     }
 #endif
 #if defined ZMQ_HAVE_TIPC
@@ -659,6 +740,8 @@ int zmq::socket_base_t::connect (const char *addr_)
         int rc = paddr->resolved.tipc_addr->resolve (address.c_str());
         if (rc != 0) {
             delete paddr;
+
+			exit_mutex();
             return -1;
         }
     }
@@ -704,6 +787,8 @@ int zmq::socket_base_t::connect (const char *addr_)
     paddr->to_string (last_endpoint);
 
     add_endpoint (addr_, (own_t *) session, newpipe);
+
+	exit_mutex();
     return 0;
 }
 
@@ -722,37 +807,51 @@ int zmq::socket_base_t::term_endpoint (const char *addr_)
         return -1;
     }
 
+	enter_mutex();
+
     //  Check whether endpoint address passed to the function is valid.
     if (unlikely (!addr_)) {
         errno = EINVAL;
+
+		exit_mutex();
         return -1;
     }
 
     //  Process pending commands, if any, since there could be pending unprocessed process_own()'s
     //  (from launch_child() for example) we're asked to terminate now.
     int rc = process_commands (0, false);
-    if (unlikely (rc != 0))
-        return -1;
+	if (unlikely(rc != 0)) {	
+		exit_mutex();
+		return -1;
+	}
 
     //  Parse addr_ string.
     std::string protocol;
     std::string address;
-    if (parse_uri (addr_, protocol, address) || check_protocol (protocol))
-        return -1;
+	if (parse_uri(addr_, protocol, address) || check_protocol(protocol)){	
+		exit_mutex();
+		return -1;
+	}
 
     // Disconnect an inproc socket
     if (protocol == "inproc") {
-        if (unregister_endpoint (std::string (addr_), this) == 0)
-            return 0;
+		if (unregister_endpoint(std::string(addr_), this) == 0) {
+			exit_mutex();
+			return 0;
+		}
         std::pair <inprocs_t::iterator, inprocs_t::iterator> range = inprocs.equal_range (std::string (addr_));
         if (range.first == range.second) {
             errno = ENOENT;
+
+			exit_mutex();
             return -1;
         }
 
         for (inprocs_t::iterator it = range.first; it != range.second; ++it)
             it->second->terminate (true);
         inprocs.erase (range.first, range.second);
+
+		exit_mutex();
         return 0;
     }
 
@@ -760,6 +859,8 @@ int zmq::socket_base_t::term_endpoint (const char *addr_)
     std::pair <endpoints_t::iterator, endpoints_t::iterator> range = endpoints.equal_range (std::string (addr_));
     if (range.first == range.second) {
         errno = ENOENT;
+
+		exit_mutex();
         return -1;
     }
 
@@ -770,6 +871,8 @@ int zmq::socket_base_t::term_endpoint (const char *addr_)
         term_child (it->second.first);
     }
     endpoints.erase (range.first, range.second);
+
+	exit_mutex();
     return 0;
 }
 
@@ -787,10 +890,18 @@ int zmq::socket_base_t::send (msg_t *msg_, int flags_)
         return -1;
     }
 
+	enter_mutex();
+
+	//  Get the send timeout while we are still in the lock
+	int sndtimeo = options.sndtimeo;
+
     //  Process pending commands, if any.
-    int rc = process_commands (0, true);
-    if (unlikely (rc != 0))
-        return -1;
+    int rc = process_commands (true);
+	if (unlikely(rc != 0)) {
+	
+		exit_mutex();
+		return -1;
+	}
 
     //  Clear any user-visible flags that are set on the message.
     msg_->reset_flags (msg_t::more);
@@ -803,30 +914,50 @@ int zmq::socket_base_t::send (msg_t *msg_, int flags_)
 
     //  Try to send the message.
     rc = xsend (msg_);
-    if (rc == 0)
-        return 0;
-    if (unlikely (errno != EAGAIN))
-        return -1;
 
+	// The send operation completed, we can exit the mutex now
+	exit_mutex();
+
+	if (rc == 0)		
+		return 0;
+	
+	if (unlikely(errno != EAGAIN))			
+		return -1;
+	
     //  In case of non-blocking send we'll simply propagate
     //  the error - including EAGAIN - up the stack.
-    if (flags_ & ZMQ_DONTWAIT || options.sndtimeo == 0)
-        return -1;
+	if (flags_ & ZMQ_DONTWAIT || sndtimeo == 0)
+		return -1;	
 
     //  Compute the time when the timeout should occur.
     //  If the timeout is infinite, don't care.
-    int timeout = options.sndtimeo;
+	int timeout = sndtimeo;
     uint64_t end = timeout < 0 ? 0 : (clock.now_ms () + timeout);
+
+	
 
     //  Oops, we couldn't send the message. Wait for the next
     //  command, process it and try to send the message again.
     //  If timeout is reached in the meantime, return EAGAIN.
     while (true) {
-        if (unlikely (process_commands (timeout, false) != 0))
-            return -1;
+		rc = mailbox.wait(timeout);
+
+		enter_mutex();
+
+		if (rc == 0 && (unlikely(process_commands(false) != 0)))
+		{
+			exit_mutex();
+			return -1;
+		}
+		
         rc = xsend (msg_);
-        if (rc == 0)
-            break;
+
+		// send is complete, we can exit the mutex now
+		exit_mutex();
+
+		if (rc == 0){		
+			break;			
+		}
         if (unlikely (errno != EAGAIN))
             return -1;
         if (timeout > 0) {
@@ -854,6 +985,8 @@ int zmq::socket_base_t::recv (msg_t *msg_, int flags_)
         return -1;
     }
 
+	enter_mutex();
+
     //  Once every inbound_poll_rate messages check for signals and process
     //  incoming commands. This happens only if we are not polling altogether
     //  because there are messages available all the time. If poll occurs,
@@ -863,13 +996,20 @@ int zmq::socket_base_t::recv (msg_t *msg_, int flags_)
     //  described above) from the one used by 'send'. This is because counting
     //  ticks is more efficient than doing RDTSC all the time.
     if (++ticks == inbound_poll_rate) {
-        if (unlikely (process_commands (0, false) != 0))
-            return -1;
+		if (unlikely(process_commands(false) != 0)) {
+		
+			exit_mutex();
+			return -1;
+		}
         ticks = 0;
     }
 
     //  Get the message.
     int rc = xrecv (msg_);
+
+	// receive is complete, we can exit mutex
+	exit_mutex();
+
     if (unlikely (rc != 0 && errno != EAGAIN))
         return -1;
 
@@ -1339,4 +1479,20 @@ void zmq::socket_base_t::stop_monitor (void)
         monitor_socket = NULL;
         monitor_events = 0;
     }
+}
+
+void zmq::socket_base_t::enter_mutex()
+{
+	if (options.thread_safe)
+	{
+		sync.lock();
+	}
+}
+
+void zmq::socket_base_t::exit_mutex()
+{
+	if (options.thread_safe)
+	{
+		sync.unlock();
+	}
 }

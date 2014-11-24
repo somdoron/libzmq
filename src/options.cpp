@@ -56,7 +56,8 @@ zmq::options_t::options_t () :
     gss_plaintext (false),
     socket_id (0),
     conflate (false),
-    handshake_ivl (30000)
+    handshake_ivl (30000),
+	thread_safe (false)
 {
 }
 
@@ -456,6 +457,12 @@ int zmq::options_t::setsockopt (int option_, const void *optval_,
                 return 0;
             }
             break;
+		case ZMQ_THREAD_SAFE:
+			if (is_int && (value == 0 || value == 1)) {
+				thread_safe = (value != 0);
+				return 0;
+			}
+			break;
 
         //  If libgssapi isn't installed, these options provoke EINVAL
 #       ifdef HAVE_LIBGSSAPI_KRB5
@@ -804,6 +811,12 @@ int zmq::options_t::getsockopt (int option_, void *optval_, size_t *optvallen_)
                 return 0;
             }
             break;
+		case ZMQ_THREAD_SAFE:
+			if (is_int) {
+				*value = thread_safe;
+				return 0;
+			}
+			break;
 
         //  If libgssapi isn't installed, these options provoke EINVAL
 #       ifdef HAVE_LIBGSSAPI_KRB5
