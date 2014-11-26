@@ -328,7 +328,8 @@ test_apps = \
 	tests/test_metadata \
 	tests/test_id2fd \
 	tests/test_capabilities \
-	tests/test_xpub_nodrop
+	tests/test_xpub_nodrop \
+	tests/test_xpub_manual
 
 tests_test_system_SOURCES = tests/test_system.cpp
 tests_test_system_LDADD = src/libzmq.la
