@@ -28,7 +28,8 @@ zmq::server_t::server_t (class ctx_t *parent_, uint32_t tid_, int sid_) :
     socket_base_t (parent_, tid_, sid_),
     next_rid (generate_random ())
 {
-    options.type = ZMQ_SERVER;    
+    options.type = ZMQ_SERVER;   
+    options.thread_safe = 1;	
 }
 
 zmq::server_t::~server_t ()

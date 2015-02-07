@@ -43,6 +43,7 @@ namespace zmq
         fd_t get_fd () const;
         void send (const command_t &cmd_);
         int recv (command_t *cmd_, int timeout_);
+        int wait(int timeout_);
 
 #ifdef HAVE_FORK
         // close the file descriptors in the signaller. This is used in a forked

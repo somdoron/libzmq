@@ -55,6 +55,17 @@ void zmq::mailbox_t::send (const command_t &cmd_)
         signaler.send ();
 }
 
+int zmq::mailbox_t::wait(int timeout_)
+{
+    const int rc = signaler.wait(timeout_);
+    if (rc == -1) {		
+        errno_assert (errno == EAGAIN || errno == EINTR);
+        return -1;
+    }
+
+    return 0;
+}
+
 int zmq::mailbox_t::recv (command_t *cmd_, int timeout_)
 {
     //  Try to get the command straight away.

@@ -73,6 +73,19 @@
 #include "server.hpp"
 #include "client.hpp"
 
+#define ENTER_MUTEX() \
+                        if (options.thread_safe) {\
+                            printf("%d %d entering\n", options.socket_id, (int)pthread_self());\
+                            sync.lock();\
+                            printf("%d %d enter\n", options.socket_id, (int)pthread_self());\
+                        }
+
+#define EXIT_MUTEX() \
+                        if (options.thread_safe) {\
+                            sync.unlock();\
+							printf("%d %d exit\n",options.socket_id,(int) pthread_self());\
+}
+
 bool zmq::socket_base_t::check_tag ()
 {
     return tag == 0xbaddecaf;
@@ -779,22 +792,28 @@ int zmq::socket_base_t::term_endpoint (const char *addr_)
 
 int zmq::socket_base_t::send (msg_t *msg_, int flags_)
 {
+    ENTER_MUTEX();
+
     //  Check whether the library haven't been shut down yet.
     if (unlikely (ctx_terminated)) {
         errno = ETERM;
+        EXIT_MUTEX();
         return -1;
     }
 
     //  Check whether message passed to the function is valid.
     if (unlikely (!msg_ || !msg_->check ())) {
         errno = EFAULT;
+        EXIT_MUTEX();
         return -1;
     }
 
     //  Process pending commands, if any.
     int rc = process_commands (0, true);
-    if (unlikely (rc != 0))
+    if (unlikely (rc != 0)) {
+        EXIT_MUTEX();
         return -1;
+    }
 
     //  Clear any user-visible flags that are set on the message.
     msg_->reset_flags (msg_t::more);
@@ -807,15 +826,21 @@ int zmq::socket_base_t::send (msg_t *msg_, int flags_)
 
     //  Try to send the message.
     rc = xsend (msg_);
-    if (rc == 0)
+    if (rc == 0) {
+        EXIT_MUTEX();
         return 0;
-    if (unlikely (errno != EAGAIN))
+    }
+    if (unlikely (errno != EAGAIN)) {
+        EXIT_MUTEX();
         return -1;
+    }
 
     //  In case of non-blocking send we'll simply propagate
     //  the error - including EAGAIN - up the stack.
-    if (flags_ & ZMQ_DONTWAIT || options.sndtimeo == 0)
+    if (flags_ & ZMQ_DONTWAIT || options.sndtimeo == 0) {
+        EXIT_MUTEX();
         return -1;
+    }
 
     //  Compute the time when the timeout should occur.
     //  If the timeout is infinite, don't care.
@@ -826,34 +851,53 @@ int zmq::socket_base_t::send (msg_t *msg_, int flags_)
     //  command, process it and try to send the message again.
     //  If timeout is reached in the meantime, return EAGAIN.
     while (true) {
-        if (unlikely (process_commands (timeout, false) != 0))
+        EXIT_MUTEX();
+		
+        if (unlikely (wait_for_command(timeout) != 0)) 
             return -1;
+		
+        ENTER_MUTEX();
+
+        if (unlikely (process_commands (0, false) != 0)) {
+            EXIT_MUTEX();
+            return -1;
+        }
         rc = xsend (msg_);
+
         if (rc == 0)
             break;
-        if (unlikely (errno != EAGAIN))
+        if (unlikely (errno != EAGAIN)) {
+            EXIT_MUTEX();
             return -1;
+        }
         if (timeout > 0) {
             timeout = (int) (end - clock.now_ms ());
             if (timeout <= 0) {
                 errno = EAGAIN;
+                EXIT_MUTEX();
                 return -1;
             }
         }
     }
+
+    EXIT_MUTEX();
     return 0;
 }
 
 int zmq::socket_base_t::recv (msg_t *msg_, int flags_)
 {
+    ENTER_MUTEX();
+
     //  Check whether the library haven't been shut down yet.
     if (unlikely (ctx_terminated)) {
+        EXIT_MUTEX();
         errno = ETERM;
         return -1;
     }
 
     //  Check whether message passed to the function is valid.
     if (unlikely (!msg_ || !msg_->check ())) {
+        EXIT_MUTEX();
         errno = EFAULT;
         return -1;
     }
@@ -867,21 +911,29 @@ int zmq::socket_base_t::recv (msg_t *msg_, int flags_)
     //  described above) from the one used by 'send'. This is because counting
     //  ticks is more efficient than doing RDTSC all the time.
     if (++ticks == inbound_poll_rate) {
-        if (unlikely (process_commands (0, false) != 0))
+        if (unlikely (process_commands (0, false) != 0)) {
+            EXIT_MUTEX();
             return -1;
+        }
         ticks = 0;
     }
 
     //  Get the message.
     int rc = xrecv (msg_);
-    if (unlikely (rc != 0 && errno != EAGAIN))
+	
+    if (unlikely (rc != 0 && errno != EAGAIN)) {
+        EXIT_MUTEX();
         return -1;
+    }
 
     //  If we have the message, return immediately.
     if (rc == 0) {
         if (file_desc != retired_fd)
             msg_->set_fd(file_desc);
         extract_flags (msg_);
+
+        EXIT_MUTEX();
+
         return 0;
     }
 
@@ -890,16 +942,23 @@ int zmq::socket_base_t::recv (msg_t *msg_, int flags_)
     //  activate_reader command already waiting int a command pipe.
     //  If it's not, return EAGAIN.
     if (flags_ & ZMQ_DONTWAIT || options.rcvtimeo == 0) {
-        if (unlikely (process_commands (0, false) != 0))
+        if (unlikely (process_commands (0, false) != 0)) {
+            EXIT_MUTEX();
             return -1;
+        }
         ticks = 0;
 
         rc = xrecv (msg_);
-        if (rc < 0)
+		
+        if (rc < 0) {
+            EXIT_MUTEX();
             return rc;
+        }
         if (file_desc != retired_fd)
             msg_->set_fd(file_desc);
         extract_flags (msg_);
+
+        EXIT_MUTEX();
         return 0;
     }
 
@@ -910,22 +969,41 @@ int zmq::socket_base_t::recv (msg_t *msg_, int flags_)
 
     //  In blocking scenario, commands are processed over and over again until
     //  we are able to fetch a message.
-    bool block = (ticks != 0);
+    bool block = (ticks != 0);	
     while (true) {
-        if (unlikely (process_commands (block ? timeout : 0, false) != 0))
+        EXIT_MUTEX();
+
+        printf("%d %d recv waiting for command %d %d\n", options.socket_id, (int)pthread_self(), block, timeout);
+        if (unlikely (wait_for_command(block ? timeout : 0) != 0)) {
+            printf("%d %d recv waiting for command failed\n", options.socket_id, (int)pthread_self());
+
             return -1;
-        rc = xrecv (msg_);
+        }
+        printf("%d %d recv command arrived\n", options.socket_id, (int)pthread_self());
+
+        ENTER_MUTEX();
+
+        if (unlikely (process_commands (0, false) != 0)) {
+            EXIT_MUTEX();
+            return -1;
+        }
+        
+        rc = xrecv (msg_);	
         if (rc == 0) {
             ticks = 0;
             break;
         }
-        if (unlikely (errno != EAGAIN))
+        if (unlikely (errno != EAGAIN)) {
+            EXIT_MUTEX();
             return -1;
+        }
+		
         block = true;
         if (timeout > 0) {
             timeout = (int) (end - clock.now_ms ());
             if (timeout <= 0) {
                 errno = EAGAIN;
+                EXIT_MUTEX();
                 return -1;
             }
         }
@@ -934,6 +1012,9 @@ int zmq::socket_base_t::recv (msg_t *msg_, int flags_)
     if (file_desc != retired_fd)
         msg_->set_fd(file_desc);
     extract_flags (msg_);
+
+    EXIT_MUTEX();
+
     return 0;
 }
 
@@ -971,6 +1052,26 @@ void zmq::socket_base_t::start_reaping (poller_t *poller_)
     //  immediately.
     terminate ();
     check_destroy ();
+}
+
+int zmq::socket_base_t::wait_for_command(int timeout_)
+{
+    int rc = mailbox.wait(timeout_);
+
+    if (rc == 0)
+        return rc;
+
+    if (errno == EINTR)
+        return -1;
+
+    zmq_assert (errno == EAGAIN);
+
+    if (ctx_terminated) {
+        errno = ETERM;
+        return -1;
+    }
+
+    return 0;
 }
 
 int zmq::socket_base_t::process_commands (int timeout_, bool throttle_)

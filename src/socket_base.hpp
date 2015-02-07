@@ -211,6 +211,10 @@ namespace zmq
         //  Register the pipe with this socket.
         void attach_pipe (zmq::pipe_t *pipe_, bool subscribe_to_all_ = false);
 
+        //  Wait for command to be sent to this socket. 
+        //  If timeout is -1 will block until a command is ready.
+        int wait_for_command(int timeout_);
+
         //  Processes commands sent to this socket (if any). If timeout is -1,
         //  returns only after at least one command was processed.
         //  If throttle argument is true, commands are processed at most once
