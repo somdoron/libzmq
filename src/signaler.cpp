@@ -524,7 +524,7 @@ int zmq::signaler_t::make_fdpair (fd_t *r_, fd_t *w_)
         unsigned char *dummy = (unsigned char *) malloc(dummy_size);
         int still_to_send = (int)dummy_size;
         int still_to_recv = (int)dummy_size;
-        while (still_to_send && still_to_recv) {
+        while (still_to_send || still_to_recv) {
             int nbytes;
             
             if (still_to_send > 0) {
