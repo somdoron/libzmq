@@ -210,6 +210,7 @@ namespace zmq
         //      term command from the peer as well.
         enum {
             active,
+            delay_term,
             delimiter_received,
             waiting_for_delimiter,
             term_ack_sent,
@@ -227,6 +228,9 @@ namespace zmq
 
         //  Identity of the writer. Used uniquely by the reader side.
         int routing_id;
+
+        //  Indication if we are in the middle of read multipart message
+        bool more_to_read;
 
         //  Pipe's credential.
         blob_t credential;

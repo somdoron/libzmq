@@ -92,7 +92,8 @@ zmq::pipe_t::pipe_t (object_t *parent_, upipe_t *inpipe_, upipe_t *outpipe_,
     sink (NULL),
     state (active),
     delay (true),
-    routing_id(0),
+    routing_id (0),
+    more_to_read (false),
     conflate (conflate_)
 {
 }
@@ -144,7 +145,7 @@ bool zmq::pipe_t::check_read ()
 {
     if (unlikely (!in_active))
         return false;
-    if (unlikely (state != active && state != waiting_for_delimiter))
+    if (unlikely (state != active && state != waiting_for_delimiter && state != delay_term))
         return false;
 
     //  Check if there's an item in the pipe.
@@ -156,6 +157,7 @@ bool zmq::pipe_t::check_read ()
     //  If the next item in the pipe is message delimiter,
     //  initiate termination process.
     if (inpipe->probe (is_delimiter)) {
+        more_to_read = false;
         msg_t msg;
         bool ok = inpipe->read (&msg);
         zmq_assert (ok);
@@ -170,12 +172,13 @@ bool zmq::pipe_t::read (msg_t *msg_)
 {
     if (unlikely (!in_active))
         return false;
-    if (unlikely (state != active && state != waiting_for_delimiter))
+    if (unlikely (state != active && state != waiting_for_delimiter && state != delay_term))
         return false;
 
 read_message:
     if (!inpipe->read (msg_)) {
         in_active = false;
+        more_to_read = false;
         return false;
     }
 
@@ -190,6 +193,7 @@ read_message:
 
     //  If delimiter was read, start termination process of the pipe.
     if (msg_->is_delimiter ()) {
+        more_to_read = false;
         process_delimiter ();
         return false;
     }
@@ -199,6 +203,14 @@ read_message:
 
     if (lwm > 0 && msgs_read % lwm == 0)
         send_activate_write (peer, msgs_read);
+
+    more_to_read = msg_->flags () & msg_t::more;
+
+    //  If we were asked to terminate and completed reading the multipart message, it is time to continue termination
+    if (!more_to_read && state == delay_term) {
+        send_pipe_term (peer);
+        state = term_req_sent1;
+    }
 
     return true;
 }
@@ -257,7 +269,7 @@ void zmq::pipe_t::flush ()
 
 void zmq::pipe_t::process_activate_read ()
 {
-    if (!in_active && (state == active || state == waiting_for_delimiter)) {
+    if (!in_active && (state == active || state == waiting_for_delimiter || state == delay_term)) {
         in_active = true;
         sink->read_activated (this);
     }
@@ -302,6 +314,7 @@ void zmq::pipe_t::process_hiccup (void *pipe_)
 void zmq::pipe_t::process_pipe_term ()
 {
     zmq_assert (state == active
+            ||  state == delay_term
             ||  state == delimiter_received
             ||  state == term_req_sent1);
 
@@ -318,6 +331,13 @@ void zmq::pipe_t::process_pipe_term ()
             outpipe = NULL;
             send_pipe_term_ack (peer);
         }
+    }
+
+    //  We delayed the termination and the other side initiated it, as we didn't read the entire-message yet
+    //  we are waiting for delimiter which will complete the termination and we can also be sure the user
+    //  read the entire multi-part message as the delimiter is only arriving after
+    else if (state == delay_term) {
+        state = waiting_for_delimiter;
     }
 
     //  Delimiter happened to arrive before the term command. Now we have the
@@ -388,13 +408,17 @@ void zmq::pipe_t::terminate (bool delay_)
     delay = delay_;
 
     //  If terminate was already called, we can ignore the duplicate invocation.
-    if (state == term_req_sent1 || state == term_req_sent2) {
+    if (state == term_req_sent1 || state == term_req_sent2 || state == delay_term) {
         return;
     }
     //  If the pipe is in the final phase of async termination, it's going to
     //  closed anyway. No need to do anything special here.
     else if (state == term_ack_sent) {
         return;
+    }
+    //  User is in the middle of read multipart message, delaying the termination
+    else if (state == active && more_to_read && delay) {
+        state = delay_term;
     }
     //  The simple sync termination case. Ask the peer to terminate and wait
     //  for the ack.
@@ -472,6 +496,7 @@ int zmq::pipe_t::compute_lwm (int hwm_)
 void zmq::pipe_t::process_delimiter ()
 {
     zmq_assert (state == active
+            ||  state == delay_term
             ||  state == waiting_for_delimiter);
 
     if (state == active)
