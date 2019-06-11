@@ -2,8 +2,6 @@ version: build-{build}
 
 shallow_clone: true
 
-skip_tags: true
-
 os: Visual Studio 2013
 
 environment:
@@ -19,6 +17,7 @@ environment:
       CMAKE_GENERATOR: "Visual Studio 9 2008"
       MSVCVERSION: "v90"
       MSVCYEAR: "vs2008"
+      ARTIFACT_NAME: libzmq-v90-release
     - platform: Win32
       configuration: Release
       WITH_LIBSODIUM: ON
@@ -26,10 +25,12 @@ environment:
       CMAKE_GENERATOR: "Visual Studio 10 2010"
       MSVCVERSION: "v100"
       MSVCYEAR: "vs2010"
+      ARTIFACT_NAME: libzmq-v100-release
     - platform: Win32
       configuration: Release
       WITH_LIBSODIUM: ON
       ENABLE_CURVE: ON
+      ARTIFACT_NAME: libzmq-v120-release
     - platform: Win32
       configuration: Release
       POLLER: epoll
@@ -37,21 +38,25 @@ environment:
       WITH_LIBSODIUM: ON
       ENABLE_CURVE: ON
       TEST_OPTIONS: '-E "(test_many_sockets)"'
+      ARTIFACT_NAME: libzmq-v120-epoll-release
     - platform: Win32
       configuration: Debug
       WITH_LIBSODIUM: ON
       ENABLE_CURVE: ON
       TEST_OPTIONS: '-E "(test_many_sockets)"'
+      ARTIFACT_NAME: libzmq-v120-debug
     - platform: x64
       configuration: Debug
       WITH_LIBSODIUM: ON
       ENABLE_CURVE: ON
       TEST_OPTIONS: '-E "(test_many_sockets)"'
+      ARTIFACT_NAME: libzmq-v120-debug-x64
     - platform: Win32
       configuration: Release
       WITH_LIBSODIUM: OFF
       ENABLE_CURVE: OFF
       ENABLE_DRAFTS: OFF
+      ARTIFACT_NAME: libzmq-v120-nocurve-release
     - platform: Win32
       configuration: Release
       WITH_LIBSODIUM: ON
@@ -60,6 +65,7 @@ environment:
       CMAKE_GENERATOR: "Visual Studio 14 2015"
       MSVCVERSION: "v140"
       MSVCYEAR: "vs2015"
+      ARTIFACT_NAME: libzmq-v140-release
     - platform: Win32
       configuration: Release
       WITH_LIBSODIUM: ON
@@ -69,14 +75,17 @@ environment:
       MSVCVERSION: "v141"
       MSVCYEAR: "vs2017"
       TEST_OPTIONS: '-E "(test_many_sockets)"'
+      ARTIFACT_NAME: libzmq-v141-release
     - platform: cygwin64
       WITH_LIBSODIUM: OFF
       ENABLE_CURVE: ON
       CMAKE_GENERATOR: "Unix Makefiles"
+      ARTIFACT_NAME: libzmq-cygwin64
     - platform: mingw64
       WITH_LIBSODIUM: OFF
       ENABLE_CURVE: ON
       CMAKE_GENERATOR: "MSYS Makefiles"
+      ARTIFACT_NAME: libzmq-mingw64
 
 matrix:
   fast_finish: false
@@ -181,8 +190,9 @@ after_build:
             # -Dsonar.cxx.compiler.regex=^(?<filename>.*)\\((?<line>[0-9]+)\\):\\x20warning\\x20(?<id>C\\d\\d\\d\\d):(?<message>.*)$
   - cmd: cd %LIBZMQ_BUILDDIR%\bin\%Configuration%"
   - cmd: if "%WITH_LIBSODIUM%"=="ON" copy "%SODIUM_LIBRARY_DIR%\libsodium.dll" .
-  - cmd: 7z a -y -bd -mx=9 libzmq.zip *.exe *.dll *.pdb
-  - ps: Push-AppveyorArtifact "libzmq.zip" -Filename "libzmq-${env:Platform}-${env:Configuration}.zip"
+  - cmd: copy "%LIBZMQ_SRCDIR%\include\zmq.h" .
+  - cmd: 7z a -y -bd -mx=9 libzmq.zip *.exe *.dll *.pdb *.h
+  - ps: Push-AppveyorArtifact "libzmq.zip" -Filename "${env:ARTIFACT_NAME}.zip"
 
 test_script:
   - cmd: cd "%LIBZMQ_BUILDDIR%"
@@ -197,6 +207,19 @@ test_script:
             set TEST_OPTIONS=%TEST_OPTIONS% -j5
          )
   - cmd: ctest -C "%Configuration%" -V %TEST_OPTIONS%
+
+deploy:
+  - provider: BinTray
+    username: somdoron
+    api_key:
+      secure: GTpnqv6RB1urgspx4kTsUDksN2Vaow/x4kFJKmUX4zFjMDUlBsRUCrpFBiedYb33
+    subject: somdoron
+    repo: zeromq
+    package: libzmq
+    publish: true
+    version: ${APPVEYOR_REPO_TAG_NAME}
+    on:
+      APPVEYOR_REPO_TAG: true
 
 # the analysis build is repeated; apparently appveyor only uses the first section that matches some branch
 for:
