@@ -1,0 +1,57 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: windows-2019
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: x64
+            configuration: release
+            WITH_LIBSODIUM: ON
+            ENABLE_CURVE: ON
+            CMAKE_GENERATOR: Visual Studio 16 2019
+            MSVCVERSION: v142
+            MSVCYEAR: vs2019
+            ARTIFACT_NAME: v142-x64
+            ENABLE_DRAFTS: ON
+      env:
+        platform: ${{ matrix.platform }}
+        configuration: ${{ matrix.configuration }}
+        WITH_LIBSODIUM: ${{ matrix.WITH_LIBSODIUM }}
+        ENABLE_CURVE: ${{ matrix.ENABLE_CURVE }}
+        CMAKE_GENERATOR: ${{ matrix.CMAKE_GENERATOR }}
+        MSVCVERSION: ${{ matrix.MSVCVERSION }}
+        MSVCYEAR: ${{ matrix.MSVCYEAR }}
+        ARTIFACT_NAME: ${{ matrix.ARTIFACT_NAME }}
+        ENABLE_DRAFTS: ${{ matrix.ENABLE_DRAFTS }}
+        SODIUM_INCLUDE_DIR: ${{ env.GITHUB_WORKSPACE }}\src\libsodium\include"
+        SODIUM_LIBRARY_DIR: ${{ env.GITHUB_WORKSPACE }}\bin\${{ matrix.platform }}\${{ matrix.configuration }}\${{ matrix.MSVCVERSION }}\dynamic"
+      steps:
+      - name: Install
+        shell: cmd
+        run: |       
+          if "%Platform%"=="x64" (if not "%MSVCVERSION%"=="v142" set "CMAKE_GENERATOR=%CMAKE_GENERATOR% Win64")
+          echo "Generator='%CMAKE_GENERATOR%'"
+          echo "Platform='%Platform%'"
+          echo "SODIUM_INCLUDE_DIR='%SODIUM_INCLUDE_DIR%'"
+          echo "SODIUM_LIBRARY_DIR='%SODIUM_LIBRARY_DIR%'"
+      - uses: actions/checkout@v2
+        if: matrix.WITH_LIBSODIUM == 'on'
+        repository: https://github.com/jedisct1/libsodium.git
+        ref: stable
+        path: libsodium        
+      - name: Compile libsodium
+        if: matrix.WITH_LIBSODIUM == 'on'
+        shell: cmd
+        workdir: libsodium
+        run: |
+          msbuild /v:minimal /p:Configuration=%Configuration%DLL builds\msvc\%MSVCYEAR%\libsodium\libsodium.vcxproj
+      - name: Copy libsodium
+        if: matrix.WITH_LIBSODIUM == 'on'
+        shell: powershell
+        workdir: libsodium
+        run: Copy-Item "bin\${env:Platform}\${env:Configuration}\${env:MSVCVERSION}\dynamic\libsodium.lib" -Destination "bin\${env:Platform}\${env:Configuration}\${env:MSVCVERSION}\dynamic\sodium.lib"
+          
