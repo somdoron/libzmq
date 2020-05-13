@@ -24,7 +24,7 @@ class udp_engine_t ZMQ_FINAL : public io_object_t, public i_engine
 
     //  i_engine interface implementation.
     //  Plug the engine to the session.
-    void plug (zmq::io_thread_t *io_thread_, class session_base_t *session_);
+    bool plug (zmq::io_thread_t *io_thread_, class session_base_t *session_);
 
     //  Terminate and deallocate the engine. Note that 'detached'
     //  events are not fired on termination.

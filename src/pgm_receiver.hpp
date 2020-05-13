@@ -55,7 +55,7 @@ class pgm_receiver_t ZMQ_FINAL : public io_object_t, public i_engine
     int init (bool udp_encapsulation_, const char *network_);
 
     //  i_engine interface implementation.
-    void plug (zmq::io_thread_t *io_thread_, zmq::session_base_t *session_);
+    bool plug (zmq::io_thread_t *io_thread_, zmq::session_base_t *session_);
     void terminate ();
     bool restart_input ();
     void restart_output ();

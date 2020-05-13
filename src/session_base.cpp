@@ -121,6 +121,7 @@ zmq::session_base_t::session_base_t (class io_thread_t *io_thread_,
     io_object_t (io_thread_),
     _active (active_),
     _pipe (NULL),
+    _bind_pipe (NULL),
     _zap_pipe (NULL),
     _incomplete_in (false),
     _pending (false),
@@ -145,6 +146,7 @@ zmq::session_base_t::~session_base_t ()
 {
     zmq_assert (!_pipe);
     zmq_assert (!_zap_pipe);
+    zmq_assert (!_bind_pipe);
 
     //  If there's still a pending linger timer, remove it.
     if (_has_linger_timer) {
@@ -267,7 +269,8 @@ void zmq::session_base_t::pipe_terminated (pipe_t *pipe_)
 {
     // Drop the reference to the deallocated pipe if required.
     zmq_assert (pipe_ == _pipe || pipe_ == _zap_pipe
-                || _terminating_pipes.count (pipe_) == 1);
+                || _terminating_pipes.count (pipe_) > 0);
+    zmq_assert (_bind_pipe != pipe_);
 
     if (pipe_ == _pipe) {
         // If this is our current pipe, remove it
@@ -303,7 +306,7 @@ void zmq::session_base_t::read_activated (pipe_t *pipe_)
 {
     // Skip activating if we're detaching this pipe
     if (unlikely (pipe_ != _pipe && pipe_ != _zap_pipe)) {
-        zmq_assert (_terminating_pipes.count (pipe_) == 1);
+        zmq_assert (_terminating_pipes.count (pipe_) > 0 || pipe_ == _bind_pipe);
         return;
     }
 
@@ -324,7 +327,7 @@ void zmq::session_base_t::write_activated (pipe_t *pipe_)
 {
     // Skip activating if we're detaching this pipe
     if (_pipe != pipe_) {
-        zmq_assert (_terminating_pipes.count (pipe_) == 1);
+        zmq_assert (_terminating_pipes.count (pipe_) > 0 || pipe_ == _bind_pipe);
         return;
     }
 
@@ -410,7 +413,7 @@ void zmq::session_base_t::process_attach (i_engine *engine_)
 
     //  Create the pipe if it does not exist yet.
     if (!_pipe && !is_terminating ()) {
-        object_t *parents[2] = {this, _socket};
+        object_t *parents[2] = {this, this};
         pipe_t *pipes[2] = {NULL, NULL};
 
         const bool conflate = get_effective_conflate_option (options);
@@ -428,19 +431,34 @@ void zmq::session_base_t::process_attach (i_engine *engine_)
         zmq_assert (!_pipe);
         _pipe = pipes[0];
 
+        zmq_assert (!_bind_pipe);
+        _bind_pipe = pipes[1];
+        _bind_pipe->set_event_sink (this);
+
         //  The endpoints strings are not set on bind, set them here so that
         //  events can use them.
         pipes[0]->set_endpoint_pair (engine_->get_endpoint ());
         pipes[1]->set_endpoint_pair (engine_->get_endpoint ());
-
-        //  Ask socket to plug into the remote end of the pipe.
-        send_bind (_socket, pipes[1]);
     }
 
     //  Plug in the engine.
     zmq_assert (!_engine);
     _engine = engine_;
-    _engine->plug (_io_thread, this);
+    bool ready = _engine->plug (_io_thread, this);
+
+    if (ready)
+        engine_ready ();
+}
+
+void zmq::session_base_t::engine_ready ()
+{
+    if (_bind_pipe) {
+        //  Pipe is ready to be attached to socket, setting the parent to the socket and clearing the current sink (session)
+        _bind_pipe->set_tid (_socket->get_tid ());
+        _bind_pipe->clear_event_sink ();
+        send_bind (_socket, _bind_pipe);
+        _bind_pipe = NULL;
+    }
 }
 
 void zmq::session_base_t::engine_error (bool handshaked_,
@@ -478,6 +496,11 @@ void zmq::session_base_t::engine_error (bool handshaked_,
             /* FALLTHROUGH */
         case i_engine::protocol_error:
             if (_pending) {
+                if (_bind_pipe) {
+                    _bind_pipe->set_nodelay ();
+                    _terminating_pipes.insert (_bind_pipe);
+                    _bind_pipe = NULL;
+                }
                 if (_pipe)
                     _pipe->terminate (false);
                 if (_zap_pipe)
@@ -514,15 +537,23 @@ void zmq::session_base_t::process_term (int linger_)
         //  If there's finite linger value, delay the termination.
         //  If linger is infinite (negative) we don't even have to set
         //  the timer.
-        if (linger_ > 0) {
+        if (linger_ > 0 && _bind_pipe == NULL) {
             zmq_assert (!_has_linger_timer);
             add_timer (linger_, linger_timer_id);
             _has_linger_timer = true;
         }
 
-        //  Start pipe termination process. Delay the termination till all messages
-        //  are processed in case the linger time is non-zero.
-        _pipe->terminate (linger_ != 0);
+        //  Delay the termination till all messages are processed in case the linger time is non-zero.
+        bool delay = linger_ != 0 && _bind_pipe == NULL;
+
+        if (_bind_pipe) {
+            _bind_pipe->set_nodelay ();
+            _terminating_pipes.insert (_bind_pipe);
+            _bind_pipe = NULL;
+        }
+
+        //  Start pipe termination process.
+        _pipe->terminate (delay);
 
         //  TODO: Should this go into pipe_t::terminate ?
         //  In case there's no engine and there's only delimiter in the
@@ -568,6 +599,13 @@ void zmq::session_base_t::reconnect ()
 #endif
         && _addr->protocol != protocol_name::udp) {
         _pipe->hiccup ();
+
+        if (_bind_pipe) {
+            _bind_pipe->set_nodelay();
+            _terminating_pipes.insert (_bind_pipe);
+            _bind_pipe = NULL;
+        }
+
         _pipe->terminate (false);
         _terminating_pipes.insert (_pipe);
         _pipe = NULL;

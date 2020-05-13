@@ -216,7 +216,7 @@ void zmq::norm_engine_t::shutdown ()
     }
 } // end zmq::norm_engine_t::shutdown()
 
-void zmq::norm_engine_t::plug (io_thread_t *io_thread_,
+bool zmq::norm_engine_t::plug (io_thread_t *io_thread_,
                                session_base_t *session_)
 {
     // TBD - we may assign the NORM engine to an io_thread in the future???
@@ -234,6 +234,7 @@ void zmq::norm_engine_t::plug (io_thread_t *io_thread_,
     if (is_sender)
         send_data ();
 
+    return true;
 } // end zmq::norm_engine_t::init()
 
 void zmq::norm_engine_t::unplug ()

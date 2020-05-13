@@ -64,6 +64,9 @@ class session_base_t : public own_t, public io_object_t, public i_pipe_events
     void rollback ();
     void engine_error (bool handshaked_, zmq::i_engine::error_reason_t reason_);
 
+    //  Called by the engine to notify the session engine is ready
+    void engine_ready ();
+
     //  i_pipe_events interface implementation.
     void read_activated (zmq::pipe_t *pipe_) ZMQ_FINAL;
     void write_activated (zmq::pipe_t *pipe_) ZMQ_FINAL;
@@ -127,6 +130,9 @@ class session_base_t : public own_t, public io_object_t, public i_pipe_events
 
     //  Pipe connecting the session to its socket.
     zmq::pipe_t *_pipe;
+
+    //  Pipe awaits to bind to a socket
+    zmq::pipe_t *_bind_pipe;
 
     //  Pipe used to exchange messages with ZAP socket.
     zmq::pipe_t *_zap_pipe;

@@ -101,7 +101,7 @@ int zmq::udp_engine_t::init (address_t *address_, bool send_, bool recv_)
     return 0;
 }
 
-void zmq::udp_engine_t::plug (io_thread_t *io_thread_, session_base_t *session_)
+bool zmq::udp_engine_t::plug (io_thread_t *io_thread_, session_base_t *session_)
 {
     zmq_assert (!_plugged);
     _plugged = true;
@@ -124,7 +124,7 @@ void zmq::udp_engine_t::plug (io_thread_t *io_thread_, session_base_t *session_)
         if (rc != 0) {
             assert_success_or_recoverable (_fd, rc);
             error (connection_error);
-            return;
+            return false;
         }
     }
 
@@ -181,7 +181,7 @@ void zmq::udp_engine_t::plug (io_thread_t *io_thread_, session_base_t *session_)
 
         if (rc != 0) {
             error (protocol_error);
-            return;
+            return false;
         }
 
 #ifdef ZMQ_HAVE_VXWORKS
@@ -196,7 +196,7 @@ void zmq::udp_engine_t::plug (io_thread_t *io_thread_, session_base_t *session_)
         if (rc != 0) {
             assert_success_or_recoverable (_fd, rc);
             error (connection_error);
-            return;
+            return false;
         }
 
         if (multicast) {
@@ -218,6 +218,8 @@ void zmq::udp_engine_t::plug (io_thread_t *io_thread_, session_base_t *session_)
             restart_output ();
         }
     }
+
+    return true;
 }
 
 int zmq::udp_engine_t::set_udp_multicast_loop (fd_t s_,

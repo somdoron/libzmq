@@ -146,6 +146,12 @@ void zmq::pipe_t::set_event_sink (i_pipe_events *sink_)
     _sink = sink_;
 }
 
+void zmq::pipe_t::clear_event_sink ()
+{
+    zmq_assert (_sink);
+    _sink = NULL;
+}
+
 void zmq::pipe_t::set_server_socket_routing_id (
   uint32_t server_socket_routing_id_)
 {

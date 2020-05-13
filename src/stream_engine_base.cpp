@@ -174,7 +174,7 @@ zmq::stream_engine_base_t::~stream_engine_base_t ()
     LIBZMQ_DELETE (_mechanism);
 }
 
-void zmq::stream_engine_base_t::plug (io_thread_t *io_thread_,
+bool zmq::stream_engine_base_t::plug (io_thread_t *io_thread_,
                                       session_base_t *session_)
 {
     zmq_assert (!_plugged);
@@ -192,6 +192,8 @@ void zmq::stream_engine_base_t::plug (io_thread_t *io_thread_,
     _io_error = false;
 
     plug_internal ();
+
+    return false;
 }
 
 void zmq::stream_engine_base_t::unplug ()
@@ -252,6 +254,10 @@ bool zmq::stream_engine_base_t::in_event_internal ()
             //  Handshaking was successful.
             //  Switch into the normal message flow.
             _handshaking = false;
+
+            //  If no mechanism or mechanism is already ready, notify the session that the engine is ready
+            if (_mechanism == NULL)
+                _session->engine_ready ();
         } else
             return false;
     }
@@ -521,6 +527,9 @@ void zmq::stream_engine_base_t::mechanism_ready ()
     }
 
     bool flush_session = false;
+
+    //  Notify the session the stream_engine is ready to send and receive messages
+    _session->engine_ready ();
 
     if (_options.recv_routing_id) {
         msg_t routing_id;

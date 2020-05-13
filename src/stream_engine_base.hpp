@@ -61,7 +61,7 @@ class stream_engine_base_t : public io_object_t, public i_engine
     ~stream_engine_base_t () ZMQ_OVERRIDE;
 
     //  i_engine interface implementation.
-    void plug (zmq::io_thread_t *io_thread_,
+    bool plug (zmq::io_thread_t *io_thread_,
                zmq::session_base_t *session_) ZMQ_FINAL;
     void terminate () ZMQ_FINAL;
     bool restart_input () ZMQ_FINAL;

@@ -86,6 +86,9 @@ class pipe_t ZMQ_FINAL : public object_t,
     //  Specifies the object to send events to.
     void set_event_sink (i_pipe_events *sink_);
 
+    //  Remove the current event sink
+    void clear_event_sink ();
+
     //  Pipe endpoint can store an routing ID to be used by its clients.
     void set_server_socket_routing_id (uint32_t server_socket_routing_id_);
     uint32_t get_server_socket_routing_id () const;

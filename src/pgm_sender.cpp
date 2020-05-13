@@ -76,7 +76,7 @@ int zmq::pgm_sender_t::init (bool udp_encapsulation_, const char *network_)
     return rc;
 }
 
-void zmq::pgm_sender_t::plug (io_thread_t *io_thread_, session_base_t *session_)
+bool zmq::pgm_sender_t::plug (io_thread_t *io_thread_, session_base_t *session_)
 {
     LIBZMQ_UNUSED (io_thread_);
     //  Allocate 2 fds for PGM socket.
@@ -104,6 +104,8 @@ void zmq::pgm_sender_t::plug (io_thread_t *io_thread_, session_base_t *session_)
 
     //  Set POLLOUT for downlink_socket_handle.
     set_pollout (handle);
+
+    return true;
 }
 
 void zmq::pgm_sender_t::unplug ()

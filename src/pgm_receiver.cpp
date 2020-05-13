@@ -64,7 +64,7 @@ int zmq::pgm_receiver_t::init (bool udp_encapsulation_, const char *network_)
     return pgm_socket.init (udp_encapsulation_, network_);
 }
 
-void zmq::pgm_receiver_t::plug (io_thread_t *io_thread_,
+bool zmq::pgm_receiver_t::plug (io_thread_t *io_thread_,
                                 session_base_t *session_)
 {
     LIBZMQ_UNUSED (io_thread_);
@@ -81,6 +81,8 @@ void zmq::pgm_receiver_t::plug (io_thread_t *io_thread_,
 
     //  If there are any subscriptions already queued in the session, drop them.
     drop_subscriptions ();
+
+    return true;
 }
 
 void zmq::pgm_receiver_t::unplug ()
